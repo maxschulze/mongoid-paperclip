@@ -8,9 +8,37 @@ rescue LoadError
 end
 
 ##
+# Use mongoid's logger.
+module Paperclip
+  class << self
+    def logger
+      if Mongoid.respond_to?(:logger) # mongoid 3
+        Mongoid.logger
+      elsif Mongoid::Config.respond_to?(:logger) # mongoid 2
+        Mongoid::Config.logger
+      else
+        Rails.logger
+      end
+    end
+  end
+end
+
+##
 # the id of mongoid is not integer, correct the id_partitioin.
 Paperclip.interpolates :id_partition do |attachment, style|
   attachment.instance.id.to_s.scan(/.{4}/).join("/")
+end
+
+##
+# mongoid criteria uses a different syntax.
+module Paperclip
+  module Helpers
+    def each_instance_with_attachment(klass, name)
+      class_for(klass).unscoped.where("#{name}_file_name".to_sym.ne => nil).each do |instance|
+        yield(instance)
+      end
+    end
+  end
 end
 
 ##
@@ -45,10 +73,22 @@ module Mongoid
     ##
     # Extends the model with the defined Class methods
     def self.included(base)
-      base.extend(ClassMethods)
+      base.instance_eval do
+        ##
+        # Include Paperclip and Paperclip::Glue for compatibility
+        include ::Paperclip
+        include ::Paperclip::Glue
+
+        alias :__mongoid_has_attached_file :has_attached_file
+
+        extend ClassMethods
+      end
     end
 
     module ClassMethods
+      def has_attached_file(field, options = {})
+        has_mongoid_attached_file(filed, options)
+      end
 
       ##
       # Adds Mongoid::Paperclip's "#has_mongoid_attached_file" class method to the model
@@ -56,32 +96,17 @@ module Mongoid
       # it'll also add the required fields for Paperclip since MongoDB is schemaless and doesn't
       # have migrations.
       def has_mongoid_attached_file(field, options = {})
-
         ##
-        # Include Paperclip and Paperclip::Glue for compatibility
-        unless self.ancestors.include?(::Paperclip)
-          include ::Paperclip
-          include ::Paperclip::Glue
-        end
-        
+        # Define the necessary collection fields in Mongoid for Paperclip
+        field(:"#{field}_file_name", :type => String)
+        field(:"#{field}_content_type", :type => String)
+        field(:"#{field}_file_size", :type => Integer)
+        field(:"#{field}_updated_at", :type => DateTime)
+
         ##
         # Invoke Paperclip's #has_attached_file method and passes in the
         # arguments specified by the user that invoked Mongoid::Paperclip#has_mongoid_attached_file
-        has_attached_file(field, options)
-
-        ##
-        # Define the necessary collection fields in Mongoid for Paperclip
-        field(:"#{field}_file_name",    :type => String)
-        field(:"#{field}_content_type", :type => String)
-        field(:"#{field}_file_size",    :type => Integer)
-        field(:"#{field}_updated_at",   :type => DateTime)
-      end
-
-      ##
-      # This method is deprecated
-      def has_attached_file(field, options = {})
-        raise "Mongoid::Paperclip#has_attached_file is deprecated, " +
-              "Use 'has_mongoid_attached_file' instead"
+        __mongoid_has_attached_file(field, options)
       end
     end
 
