@@ -87,7 +87,7 @@ module Mongoid
 
     module ClassMethods
       def has_attached_file(field, options = {})
-        has_mongoid_attached_file(filed, options)
+        has_mongoid_attached_file(field, options)
       end
 
       ##
